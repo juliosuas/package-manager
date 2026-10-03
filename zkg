@@ -1109,6 +1109,46 @@ def cmd_unbundle(
     print("Unbundling complete.")
 
 
+def _required_package_removal_prompt(
+    manager: zeekpkg.Manager,
+    packages_to_remove: list[InstalledPackage],
+) -> str | None:
+    """Return a prompt when other installed packages still require these.
+
+    Packages included in this removal are not treated as remaining requirers.
+    Returns None when nothing else still depends on the packages being removed.
+    """
+    removing = {ipkg.package.name for ipkg in packages_to_remove}
+    lines: list[str] = []
+
+    for ipkg in packages_to_remove:
+        requirers: list[str] = []
+
+        for depender_name in manager.list_depender_pkgs(ipkg.package.name):
+            depender = manager.find_installed_package(depender_name)
+
+            if not depender or depender.package.name in removing:
+                continue
+
+            requirers.append(depender.package.qualified_name())
+
+        if not requirers:
+            continue
+
+        required_by = ", ".join(sorted(set(requirers)))
+        lines.append(
+            f"Package {ipkg.package.qualified_name()} is required by {required_by}",
+        )
+
+    if not lines:
+        return None
+
+    if len(lines) == 1:
+        return f"{lines[0]}, remove anyway?"
+
+    return "\n".join(lines) + "\nRemove anyway?"
+
+
 def cmd_remove(
     manager: zeekpkg.Manager,
     args: argparse.Namespace,
@@ -1168,6 +1208,19 @@ def cmd_remove(
 
         if not confirmation_prompt("Proceed?"):
             return
+
+        # --nodeps skips dependency checks. --force never enters this block.
+        if not args.nodeps:
+            required_prompt = _required_package_removal_prompt(
+                manager,
+                packages_to_remove,
+            )
+
+            if required_prompt and not confirmation_prompt(
+                required_prompt,
+                default_to_yes=False,
+            ):
+                return
 
     for pkg_name in sorted(dependers_to_unload):
         ipkg = manager.find_installed_package(pkg_name)
