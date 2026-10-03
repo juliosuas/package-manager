@@ -112,9 +112,9 @@ class Template:
             try:
                 repo = git.Repo(template)
                 if not repo.is_dirty():
-                    ref = repo.head.ref
-                    assert hasattr(ref, "commit")
-                    version = ref.commit.hexsha[:8]
+                    # head.ref raises TypeError when HEAD is detached.
+                    # head.commit is the same commit when HEAD is attached.
+                    version = repo.head.commit.hexsha[:8]
             except git.InvalidGitRepositoryError:
                 pass
             templatedir = template
