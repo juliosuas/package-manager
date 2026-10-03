@@ -578,6 +578,44 @@ def cmd_test(
         sys.exit(1)
 
 
+def _same_path(left: str, right: str) -> bool:
+    return os.path.realpath(left) == os.path.realpath(right)
+
+
+def _using_default_package_dirs(config: configparser.ConfigParser) -> bool:
+    """Return True when scripts and plugins still use the builtin ~/.zkg dirs."""
+    home = home_config_dir()
+    return _same_path(
+        config.get("paths", "script_dir"),
+        os.path.join(home, "script_dir"),
+    ) and _same_path(
+        config.get("paths", "plugin_dir"),
+        os.path.join(home, "plugin_dir"),
+    )
+
+
+def _warn_first_install_default_config(
+    manager: zeekpkg.Manager,
+    config: configparser.ConfigParser,
+) -> None:
+    """Suggest ``zkg autoconfig`` on the first install into ``~/.zkg``.
+
+    Built-in Zeek packages do not count: those are discovered, not installed
+    by the user. Later installs stay quiet so the hint is not repeated.
+    """
+    if any(not ipkg.is_builtin() for ipkg in manager.installed_packages()):
+        return
+
+    if not _using_default_package_dirs(config):
+        return
+
+    print_error(
+        "warning: script_dir and plugin_dir are still the defaults under"
+        f" {home_config_dir()}, so packages will be installed there."
+        ' You may want to run "zkg autoconfig" instead.',
+    )
+
+
 def cmd_install(
     manager: zeekpkg.Manager,
     args: argparse.Namespace,
@@ -587,6 +625,8 @@ def cmd_install(
     if args.version and len(args.package) > 1:
         print_error('error: "install --version" may only be used for a single package')
         sys.exit(1)
+
+    _warn_first_install_default_config(manager, config)
 
     package_infos: list[tuple[PackageInfo, str, bool]] = []
 
