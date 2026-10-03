@@ -336,12 +336,25 @@ Package Metadata
 See the following sub-sections for a full list of available fields that may be
 used in :file:`zkg.meta` files.
 
+`summary` field
+~~~~~~~~~~~~~~~
+
+The `summary` field gives a one-line summary of the package. When it is
+present and non-empty, :ref:`zkg list <list-command>` and
+:ref:`zkg search <search-command>` display it. When `summary` is absent
+or empty, those commands fall back to the first sentence of the
+`description` field. For example::
+
+  [package]
+  summary = Detects HTTP brute-force attempts.
+
 `description` field
 ~~~~~~~~~~~~~~~~~~~
 
 The description field may be used to give users a general overview of the
-package and its purpose. The :ref:`zkg list <list-command>` will display
-the first sentence of description fields in the listings it displays.  An
+package and its purpose. When the `summary` field is absent or empty, the
+:ref:`zkg list <list-command>` will display the first sentence of
+description fields in the listings it displays.  An
 example :file:`zkg.meta` using a description field::
 
   [package]
