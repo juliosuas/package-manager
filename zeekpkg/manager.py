@@ -2840,7 +2840,8 @@ class Manager:
             if rc != 0:
                 assert stage.state_dir
                 return (
-                    f"test_command failed with exit code {rc}",
+                    f"test_command failed with exit code {rc}; "
+                    f"stdout: {outfile}; stderr: {errfile}",
                     False,
                     stage.state_dir,
                 )

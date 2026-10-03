@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import ClassVar
 from unittest.mock import MagicMock, patch
@@ -158,3 +159,71 @@ class TestBuildInfoDiskCache:
             manager.discover_builtin_packages()
 
         mock_check_output.assert_called_once()
+
+
+class TestTestCommandFailure:
+    """A failing test_command must name the logs it wrote."""
+
+    def test_error_includes_stdout_and_stderr_paths(
+        self,
+        manager: Manager,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        pkg = tmp_path / "failpkg"
+        pkg.mkdir()
+        (pkg / "zkg.meta").write_text(
+            "[package]\n"
+            "script_dir = .\n"
+            "test_command = echo stdout-marker; echo stderr-marker >&2; exit 1\n",
+        )
+        (pkg / "__load__.zeek").write_text("# test package\n")
+
+        git_env = os.environ.copy()
+        git_env.update(
+            {
+                "GIT_AUTHOR_NAME": "Test",
+                "GIT_AUTHOR_EMAIL": "test@example.com",
+                "GIT_COMMITTER_NAME": "Test",
+                "GIT_COMMITTER_EMAIL": "test@example.com",
+            },
+        )
+        subprocess.run(
+            ["git", "init", "-b", "main"],
+            cwd=pkg,
+            check=True,
+            env=git_env,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "add", "."],
+            cwd=pkg,
+            check=True,
+            env=git_env,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "init"],
+            cwd=pkg,
+            check=True,
+            env=git_env,
+            capture_output=True,
+        )
+
+        monkeypatch.setenv("ZEEKPATH", str(tmp_path / "zeekpath"))
+        monkeypatch.setenv("ZEEK_PLUGIN_PATH", str(tmp_path / "pluginpath"))
+
+        error, passed, test_dir = manager.test(str(pkg))
+
+        clone = Path(test_dir) / "clones" / "failpkg"
+        stdout = clone / "zkg.test_command.stdout"
+        stderr = clone / "zkg.test_command.stderr"
+
+        assert stdout.is_file()
+        assert stderr.is_file()
+        assert stdout.read_text() == "stdout-marker\n"
+        assert stderr.read_text() == "stderr-marker\n"
+        assert passed is False
+        assert "exit code 1" in error
+        assert str(stdout) in error
+        assert str(stderr) in error
