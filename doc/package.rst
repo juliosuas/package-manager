@@ -69,9 +69,9 @@ lets you add a native-code plugin and support for GitHub actions.
 Templates are parameterized via :ref:`user variables <user-vars>`.
 These variables provide the basic configuration required when
 instantiating the template, for example to give the package a name. A
-template uses resolved user variables to populate internal
-*parameters* that the template requires. Think of parameters as
-derivatives of the user variables, for example to provide different
+resolved user variable becomes an internal *parameter* of the same
+name by default. Templates only need to define additional parameters
+derived from those variables, for example to provide different
 capitalizations or suffixes.
 
 A template operates as a :program:`zkg` plugin, including runnable

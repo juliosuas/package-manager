@@ -2330,6 +2330,12 @@ def cmd_create(
 
     try:
         package = tmpl.package()
+        try:
+            tmpl._require_defined_user_vars()
+        except InputError as error:
+            print_error(f"error: {error}")
+            sys.exit(1)
+
         uvars = tmpl.define_user_vars()
         uvar_names = set(package.needed_user_vars())
 
@@ -2376,11 +2382,11 @@ def cmd_create(
                 sys.exit(1)
 
         # Apply them to the template. After this, any parameter can be
-        # retrieved from the template via tmpl.lookup_param().
-        tmpl._set_user_vars(uvars)
-
-        # Verify that resulting template parameters are formatted correctly
+        # retrieved from the template via tmpl.lookup_param(). Required
+        # user vars are already parameters of the same name.
+        # Verify that resulting template parameters are formatted correctly.
         try:
+            tmpl._set_user_vars(uvars)
             package.do_validate(tmpl)
         except InputError as error:
             print_error("error: template input invalid, " + str(error))
@@ -2436,7 +2442,11 @@ def cmd_template_info(
         print_error("error: " + msg)
         sys.exit(1)
 
-    tmplinfo = tmpl.info()
+    try:
+        tmplinfo = tmpl.info()
+    except InputError as error:
+        print_error(f"error: {error}")
+        sys.exit(1)
 
     if args.json:
         print(json.dumps(tmplinfo, indent=args.jsonpretty, sort_keys=True))

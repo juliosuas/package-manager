@@ -12,8 +12,7 @@ class Package(zeekpkg.template.Package):
         return ["name"]
 
     def validate(self, tmpl: zeekpkg.template.Template) -> None:
-        if not tmpl.lookup_param("name"):
-            raise zeekpkg.template.InputError("package requires a name")
+        pass
 
 
 class Readme(zeekpkg.template.Feature):
@@ -42,15 +41,12 @@ class Template(zeekpkg.template.Template):
         ]
 
     def apply_user_vars(self, user_vars: list[zeekpkg.uservar.UserVar]) -> None:
+        # ``name`` and ``readme`` are already parameters of the same name.
         for uvar in user_vars:
-            val = uvar.val()
-            assert val is not None
-
             if uvar.name() == "name":
-                self.define_param("name", val)
+                val = uvar.val()
+                assert val is not None
                 self.define_param("module", val.upper())
-            if uvar.name() == "readme":
-                self.define_param("readme", val)
 
     def package(self) -> Package:
         return Package()

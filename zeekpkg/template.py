@@ -307,17 +307,15 @@ class Template:
         """
         return []
 
-    @abc.abstractmethod
     def apply_user_vars(self, user_vars: list["UserVar"]) -> None:
-        """Apply the user variables to this template.
+        """Derive extra template parameters from resolved user vars.
 
-        Override this by invoking self.define_param() as needed to create
-        template parameters based on the provided user vars. The
-        relationship of user vars to template parameters is up to
-        you. They can be a 1:1 mapping, you can derive additional
-        parameters from a single user var (e.g. to accommodate string
-        suffixes), or you can use a combination of user vars to define
-        a resulting parameter.
+        zkg already defines a substitution parameter for every resolved
+        user var, using that variable's name and value. Override this
+        to derive additional parameters from one or more user vars, for
+        example to accommodate string suffixes or different
+        capitalizations, or to replace a default parameter. The default
+        implementation does nothing.
 
         Args:
             user_vars (list of zeekpkg.uservar.UserVar): input values for the template.
@@ -457,36 +455,70 @@ class Template:
                 "used_by": [],
             }
 
+        self._require_defined_user_vars()
+
         if pkg is not None:
             res["provides_package"] = True
             for uvar_name in pkg.needed_user_vars():
-                try:
-                    res["user_vars"][uvar_name]["used_by"].append("package")
-                except KeyError:
-                    LOG.warning(
-                        'Package requires undefined user var "%s", skipping',
-                        uvar_name,
-                    )
+                res["user_vars"][uvar_name]["used_by"].append("package")
 
         for feature in self.features():
             feature_names.append(feature.name())
             for uvar_name in feature.needed_user_vars():
-                try:
-                    res["user_vars"][uvar_name]["used_by"].append(feature.name())
-                except KeyError:
-                    LOG.warning(
-                        'Feature "%s" requires undefined user var "%s"',
-                        feature.name(),
-                        uvar_name,
-                    )
+                res["user_vars"][uvar_name]["used_by"].append(feature.name())
 
         res["features"] = sorted(feature_names)
         return res
 
+    def _require_defined_user_vars(self) -> None:
+        """Abort if the package or a feature requires an undefined user var.
+
+        Components declare requirements via needed_user_vars(). A name
+        that define_user_vars() did not provide is a template error.
+        Raising here means validate() does not need to repeat a
+        presence check for those names.
+
+        Raises:
+            zeekpkg.template.InputError: a required user var is not defined.
+        """
+        defined = {uvar.name() for uvar in self.define_user_vars()}
+
+        pkg = self.package()
+        if pkg is not None:
+            for uvar_name in pkg.needed_user_vars():
+                if uvar_name not in defined:
+                    raise InputError(
+                        f'Package requires undefined user var "{uvar_name}"',
+                    )
+
+        for feature in self.features():
+            for uvar_name in feature.needed_user_vars():
+                if uvar_name not in defined:
+                    raise InputError(
+                        f'Feature "{feature.name()}" requires undefined user var "{uvar_name}"',
+                    )
+
     def _set_user_vars(self, user_vars: list["UserVar"]) -> None:
-        """Provides resolved user vars for the template. Used internally."""
+        """Provides resolved user vars for the template. Used internally.
+
+        Each provided user var must have a non-empty value. It becomes
+        a substitution parameter of the same name before
+        apply_user_vars() runs, which may add or replace parameters.
+
+        Raises:
+            zeekpkg.template.InputError: a required user var has no value.
+        """
         self._params = {}
         self._user_vars = user_vars
+
+        for uvar in user_vars:
+            val = uvar.val()
+            if val is None or val == "":
+                raise InputError(
+                    f'required user var "{uvar.name()}" is not available',
+                )
+            self.define_param(uvar.name(), val)
+
         self.apply_user_vars(user_vars)
 
     def _get_user_vars(self) -> list["UserVar"]:
@@ -517,6 +549,9 @@ class _Content(metaclass=abc.ABCMeta):
         this component. By doing this, the user only needs to input
         user vars for template components that actually require them.
 
+        zkg aborts when a required user var is undefined or has no
+        value, so validate() can assume those values are present.
+
         Returns:
             A list of strings identifying the needed user vars.
         """
@@ -542,9 +577,11 @@ class _Content(metaclass=abc.ABCMeta):
 
         Override this in your template's code in order to check
         whether the template parameters (available via
-        tmpl.lookup_param()) are present and correctly
-        formatted. Raise zeekpkg.template.InputError exceptions as
-        needed.
+        tmpl.lookup_param()) are correctly typed and formatted.
+        Required user vars are already present and non-empty, and each
+        is exposed as a parameter of the same name, so this method
+        does not need to repeat those checks. Raise
+        zeekpkg.template.InputError exceptions as needed.
 
         Args:
             tmpl (zeekpkg.template.Template): template context
