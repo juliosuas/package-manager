@@ -28,6 +28,24 @@ ZKG_DEFAULT_SOURCE = "https://github.com/zeek/packages"
 # The default package template
 ZKG_DEFAULT_TEMPLATE = "https://github.com/zeek/package-template"
 
+# CLI commands that do not need a Zeek binary. Built-in package discovery
+# still runs when "zeek" is on PATH, so features such as
+# "list --include-builtin" keep working, but these commands stay quiet when
+# the binary is missing. The package.zeek.org updater runs refresh, list,
+# config, and info this way. "template info" reuses the command name "info".
+COMMANDS_WITHOUT_ZEEK = frozenset(
+    {
+        "autoconfig",
+        "config",
+        "create",
+        "env",
+        "info",
+        "list",
+        "refresh",
+        "search",
+    },
+)
+
 import zeekpkg
 from zeekpkg._util import (
     delete_path,
@@ -343,6 +361,8 @@ def check_local_git_repo(git_url: str) -> bool:
 def create_manager(
     args: argparse.Namespace,
     config: configparser.ConfigParser,
+    *,
+    warn_on_missing_zeek: bool = True,
 ) -> zeekpkg.Manager:
     state_dir = config.get("paths", "state_dir")
     script_dir = config.get("paths", "script_dir")
@@ -357,6 +377,7 @@ def create_manager(
             plugin_dir=plugin_dir,
             bin_dir=bin_dir,
             zeek_dist=zeek_dist,
+            warn_on_missing_zeek=warn_on_missing_zeek,
         )
     except OSError as error:
         if error.errno == errno.EACCES:
@@ -3173,7 +3194,11 @@ def main() -> None:
         configfile = find_configfile(args)
 
     config = create_config(args, configfile)
-    manager = create_manager(args, config)
+    manager = create_manager(
+        args,
+        config,
+        warn_on_missing_zeek=args.command not in COMMANDS_WITHOUT_ZEEK,
+    )
 
     args.run_cmd(manager, args, config, configfile)
 

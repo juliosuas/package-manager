@@ -243,6 +243,8 @@ class Manager:
         zeek_dist: str = "",
         user_vars: dict[str, str] | None = None,
         bin_dir: str = "",
+        *,
+        warn_on_missing_zeek: bool = True,
     ) -> None:
         """Creates a package manager instance.
 
@@ -262,6 +264,10 @@ class Manager:
                 empty/nil value, defaults to setting `bin_dir` attribute to
                 `<state_dir>/bin`.
 
+            warn_on_missing_zeek (bool): when False, do not warn if no ``zeek``
+                executable is on ``PATH`` during built-in package discovery.
+                Discovery still runs when ``zeek`` is available.  Defaults to True.
+
         Raises:
             OSError: when a package manager state directory can't be created
             IOError: when a package manager state file can't be created
@@ -273,6 +279,7 @@ class Manager:
             None  # Cached Zeek built-in packages.
         )
         self._builtin_packages_discovered = False  # Flag if discovery even worked.
+        self._warn_on_missing_zeek = warn_on_missing_zeek
         self._info_cache: dict[tuple[str, str | None, bool], PackageInfo] = {}
         self.zeek_dist = zeek_dist
         self.state_dir = state_dir
@@ -621,7 +628,12 @@ class Manager:
         try:
             zeek_executable = get_zeek_info().zeek
         except LookupError as e:
-            LOG.warning("unable to discover builtin-packages: %s", str(e))
+            # Commands that do not need Zeek pass warn_on_missing_zeek=False.
+            # Stay quiet at every verbosity; those commands are expected to
+            # run where no zeek binary is installed. Discovery still runs
+            # when zeek is on PATH.
+            if self._warn_on_missing_zeek:
+                LOG.warning("unable to discover builtin-packages: %s", str(e))
             return self._builtin_packages
 
         stat = os.stat(zeek_executable)
