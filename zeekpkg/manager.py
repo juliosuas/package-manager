@@ -3520,7 +3520,14 @@ def _parse_package_metadata(
     metadata_file: str,
 ) -> str:
     """Return string explaining why metadata is invalid, or '' if valid."""
-    if not parser.read(metadata_file):
+    try:
+        parsed = parser.read(metadata_file)
+    except configparser.Error as error:
+        LOG.warning("%s: failed to parse metadata file: %s", metadata_file, error)
+        summary = str(error).splitlines()[0]
+        return f"failed to parse {os.path.basename(metadata_file)}: {summary}"
+
+    if not parsed:
         LOG.warning("%s: missing metadata file", metadata_file)
         return (
             f"missing {METADATA_FILENAME} (or {LEGACY_METADATA_FILENAME}) metadata file"
