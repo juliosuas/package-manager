@@ -1,0 +1,55 @@
+# @TEST-DOC: build_command that fills the stdout pipe before writing stderr must not deadlock
+# @TEST-REQUIRES: type timeout
+# @TEST-REQUIRES: type python3
+#
+# @TEST-EXEC: bash %INPUT
+# A hung install must fail the test instead of blocking the suite. btest does not time out commands.
+# @TEST-EXEC: timeout -k 5 30 zkg install foo >install.out 2>&1
+# Keep zeek-discovery warnings out of the baseline; they only appear when Zeek is absent.
+# @TEST-EXEC: grep -E '^(Installing|Installed|Loaded|Failed) ' install.out >out
+# @TEST-EXEC: python3 check-build-log.py >>out
+# @TEST-EXEC: echo "have_load_foo=$(grep -c '@load.*foo' ./scripts/packages/packages.zeek)" >>out
+# @TEST-EXEC: TEST_DIFF_CANONIFIER=$SCRIPTS/diff-remove-abspath btest-diff out
+
+cat > check-build-log.py << 'PY'
+import sys
+from pathlib import Path
+
+# Must match the payload written by packages/foo/fill-pipes.py.
+expected_stdout = b"A" * (1024 * 1024)
+log_path = Path("state/logs/foo-build.log")
+data = log_path.read_bytes()
+err_hdr = b"=== STDERR ===\n"
+out_hdr = b"=== STDOUT ===\n"
+out_at = data.find(out_hdr)
+stderr = data[len(err_hdr) : out_at] if out_at >= 0 else b""
+stdout = data[out_at + len(out_hdr) :] if out_at >= 0 else b""
+ok = (
+    data.startswith(err_hdr)
+    and stderr == b"stderr-marker\n"
+    and stdout == expected_stdout
+)
+print(f"stderr_section={stderr.decode(errors='replace')!r}")
+print(f"stdout_bytes={len(stdout)}")
+print(f"log_ok={ok}")
+if not ok:
+    sys.exit(1)
+PY
+
+cd packages/foo
+
+cat > fill-pipes.py << 'PY'
+import sys
+
+# Larger than the typical 64 KiB OS pipe buffer. A parent that drains
+# stderr to EOF before reading stdout deadlocks on this write.
+sys.stdout.buffer.write(b"A" * (1024 * 1024))
+sys.stdout.buffer.flush()
+sys.stderr.buffer.write(b"stderr-marker\n")
+sys.stderr.buffer.flush()
+PY
+
+git add fill-pipes.py
+printf '\nbuild_command = python3 ./fill-pipes.py\n' >> zkg.meta
+git add zkg.meta
+git commit -m 'build writes a full stdout pipe then stderr'
