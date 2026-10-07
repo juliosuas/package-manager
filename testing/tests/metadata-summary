@@ -1,0 +1,51 @@
+# @TEST-DOC: summary is the preferred one-line description, with a description fallback.
+#
+# @TEST-EXEC: bash %INPUT
+# @TEST-EXEC: zkg --extra-source sumsrc=`pwd`/sumsrc refresh --aggregate --sources sumsrc
+# @TEST-EXEC: zkg --extra-source sumsrc=`pwd`/sumsrc search sumtest >search.out
+# @TEST-EXEC: btest-diff search.out
+# @TEST-EXEC: zkg --extra-source sumsrc=`pwd`/sumsrc install --force with-summary description-only neither
+# @TEST-EXEC: zkg --extra-source sumsrc=`pwd`/sumsrc list installed >installed.out
+# @TEST-EXEC: btest-diff installed.out
+
+make_pkg() {
+    name="$1"
+    meta="$2"
+    mkdir -p "pkgs/$name"
+    printf '%s\n' "$meta" > "pkgs/$name/zkg.meta"
+    printf 'print "%s loaded";\n' "$name" > "pkgs/$name/__load__.zeek"
+    (
+        cd "pkgs/$name"
+        git init
+        git add .
+        git commit -m init
+    )
+}
+
+make_pkg with-summary '[package]
+tags = sumtest
+summary = Preferred summary line.
+description = This description should not appear in listings.
+    It has more sentences. Really.'
+
+make_pkg description-only '[package]
+tags = sumtest
+description = First line of the description.
+    Second sentence should not appear.'
+
+make_pkg neither '[package]
+tags = sumtest'
+
+mkdir -p sumsrc
+{
+    printf '%s\n' "$(pwd)/pkgs/with-summary"
+    printf '%s\n' "$(pwd)/pkgs/description-only"
+    printf '%s\n' "$(pwd)/pkgs/neither"
+} > sumsrc/zkg.index
+
+(
+    cd sumsrc
+    git init
+    git add .
+    git commit -m init
+)
