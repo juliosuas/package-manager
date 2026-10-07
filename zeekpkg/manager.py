@@ -2916,15 +2916,15 @@ class Manager:
                 package,
                 build_command,
             )
-            bufsize = 4096
-            build = subprocess.Popen(
+            # Drain both pipes together. Reading stderr to EOF before stdout
+            # deadlocks once the child fills the OS pipe buffer (~64 KiB).
+            build = subprocess.run(
                 build_command,
                 shell=True,
                 cwd=clone.working_dir,
                 env=env,
-                bufsize=bufsize,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
+                check=False,
             )
 
             buildlog = self.package_build_log(str(clone.working_dir))
@@ -2937,26 +2937,9 @@ class Manager:
                     )
 
                     f.write("=== STDERR ===\n".encode(std_encoding(sys.stderr)))
-
-                    while True:
-                        assert build.stderr
-                        data = build.stderr.read(bufsize)
-
-                        if data:
-                            f.write(data)
-                        else:
-                            break
-
+                    f.write(build.stderr or b"")
                     f.write("=== STDOUT ===\n".encode(std_encoding(sys.stdout)))
-
-                    while True:
-                        assert build.stdout
-                        data = build.stdout.read(bufsize)
-
-                        if data:
-                            f.write(data)
-                        else:
-                            break
+                    f.write(build.stdout or b"")
 
             except OSError as error:
                 LOG.warning(
@@ -2967,9 +2950,7 @@ class Manager:
                     error.strerror,
                 )
 
-            returncode = build.wait()
-
-            if returncode != 0:
+            if build.returncode != 0:
                 return f"package build_command failed, see log in {buildlog}"
 
         pkg_script_dir = interpolated_metadata.get("script_dir", "")
