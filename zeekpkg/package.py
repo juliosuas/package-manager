@@ -82,7 +82,23 @@ def tags(metadata_dict: dict[str, str]) -> list[str]:
 
 
 def short_description(metadata_dict: dict[str, str]) -> str:
-    """Returns the first sentence of the metadata's 'desciption' field."""
+    """Return a one-line summary from package metadata.
+
+    Uses the ``summary`` field when it contains text. Otherwise returns
+    the first sentence of the ``description`` field, or an empty string
+    when neither field provides one.
+    """
+    summary_lines = []
+
+    for line in metadata_dict.get("summary", "").split("\n"):
+        line = line.strip()
+
+        if line:
+            summary_lines.append(line)
+
+    if summary_lines:
+        return " ".join(summary_lines)
+
     if "description" not in metadata_dict:
         return ""
 
@@ -367,7 +383,9 @@ class PackageInfo:
     def short_description(self) -> str:
         """Return a short description of the package.
 
-        This will be the first sentence of the package's 'description' field."""
+        This is the ``summary`` field when set, otherwise the first sentence
+        of the ``description`` field.
+        """
         return short_description(self.metadata)
 
     def dependencies(self, field: str = "depends") -> dict[str, str] | None:
@@ -516,9 +534,10 @@ class Package:
     def short_description(self) -> str:
         """Return a short description of the package.
 
-        This will be the first sentence of the package's 'description' field
-        and may return results from the source's aggregated metadata if the
-        package has not been installed yet."""
+        This is the ``summary`` field when set, otherwise the first sentence
+        of the ``description`` field. The text may come from the source's
+        aggregated metadata if the package has not been installed yet.
+        """
         return short_description(self.metadata)
 
     def dependencies(self, field: str = "depends") -> dict[str, str] | None:
