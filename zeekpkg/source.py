@@ -14,13 +14,45 @@ import git
 
 from . import LOG
 from ._util import git_checkout, git_clone, git_default_branch
-from .package import Package, name_from_path
+from .package import Package, canonical_url, name_from_path
 
 #: The name of package index files.
 INDEX_FILENAME = "zkg.index"
 LEGACY_INDEX_FILENAME = "bro-pkg.index"
 #: The name of the package source file where package metadata gets aggregated.
 AGGREGATE_DATA_FILE = "aggregate.meta"
+
+
+def _aggregate_metadata(
+    parser: configparser.RawConfigParser,
+    directory: str,
+    url: str,
+    pkg_name: str,
+) -> dict[str, str]:
+    """Return aggregate.meta entries for one indexed package URL.
+
+    Sections written before package names dropped a trailing ``.git`` still
+    use that older key. A section is accepted only when it has no ``url``
+    field or that field is this package's URL, so ``foo.git`` and
+    ``foo.git.git`` cannot take each other's metadata.
+    """
+
+    def from_section(key: str) -> dict[str, str] | None:
+        if not parser.has_section(key):
+            return None
+
+        if parser.has_option(key, "url") and canonical_url(
+            parser.get(key, "url"),
+        ) != canonical_url(url):
+            return None
+
+        return dict(parser.items(key))
+
+    metadata = from_section(os.path.join(directory, pkg_name))
+    if metadata is None:
+        metadata = from_section(os.path.join(directory, f"{pkg_name}.git"))
+
+    return {} if metadata is None else metadata
 
 
 class Source:
@@ -143,11 +175,7 @@ class Source:
 
             for url in lines:
                 pkg_name = name_from_path(url)
-                agg_key = os.path.join(directory, pkg_name)
-                metadata = {}
-
-                if parser.has_section(agg_key):
-                    metadata = dict(parser.items(agg_key))
+                metadata = _aggregate_metadata(parser, directory, url, pkg_name)
 
                 package = Package(
                     git_url=url,

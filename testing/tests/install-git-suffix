@@ -1,0 +1,93 @@
+# @TEST-DOC: An index clone URL ending in .git installs, bundles, and upgrades as the name without that suffix.
+#
+# @TEST-EXEC: bash %INPUT
+# @TEST-EXEC: zkg install log4j
+# @TEST-EXEC: grep -q 'log4j loaded' scripts/packages/log4j/__load__.zeek
+# @TEST-EXEC: test ! -d scripts/packages/log4j.git
+# @TEST-EXEC: zkg remove log4j
+# @TEST-EXEC: zkg install log4j.git
+# @TEST-EXEC: grep -q 'log4j loaded' scripts/packages/log4j/__load__.zeek
+# @TEST-EXEC: zkg remove log4j.git
+# @TEST-EXEC: zkg install one/alice/log4j
+# @TEST-EXEC: grep -q 'log4j loaded' scripts/packages/log4j/__load__.zeek
+# @TEST-EXEC: zkg bundle log4j.bundle
+# @TEST-EXEC: zkg remove log4j
+# @TEST-EXEC: test ! -d scripts/packages/log4j
+# @TEST-EXEC: zkg unbundle log4j.bundle
+# @TEST-EXEC: grep -q 'log4j loaded' scripts/packages/log4j/__load__.zeek
+# @TEST-EXEC: test ! -d scripts/packages/log4j.git
+# @TEST-EXEC: bash legacy-bundle.sh
+# @TEST-EXEC: zkg remove log4j
+# @TEST-EXEC: zkg unbundle legacy.bundle
+# @TEST-EXEC: grep -q 'log4j loaded' scripts/packages/log4j/__load__.zeek
+# @TEST-EXEC: bash legacy-manifest.sh
+# @TEST-EXEC: zkg upgrade log4j >upgrade.out
+# @TEST-EXEC: grep -q 'already up-to-date' upgrade.out
+# @TEST-EXEC: zkg pin log4j >pin.out
+# @TEST-EXEC: grep -q 'Pinned' pin.out
+# @TEST-EXEC: zkg install log4j
+# @TEST-EXEC: grep -q 'log4j loaded' scripts/packages/log4j.git/__load__.zeek
+# @TEST-EXEC: zkg remove log4j
+# @TEST-EXEC: test ! -d scripts/packages/log4j.git
+
+set -e
+
+cp -R packages/foo packages/log4j.git
+printf 'print "log4j loaded";\n' > packages/log4j.git/__load__.zeek
+(
+    cd packages/log4j.git &&
+    git add __load__.zeek &&
+    git commit -m 'log4j'
+)
+
+echo "$(pwd)/packages/log4j.git" >> sources/one/alice/zkg.index
+(
+    cd sources/one &&
+    git add alice/zkg.index &&
+    git commit -m 'add log4j.git'
+)
+
+@TEST-START-FILE legacy-bundle.sh
+#!/bin/bash
+set -e
+rm -rf unpack
+mkdir unpack
+tar -xzf log4j.bundle -C unpack
+test -d unpack/log4j
+mv unpack/log4j unpack/log4j.git
+tar -czf legacy.bundle -C unpack .
+@TEST-END-FILE
+
+@TEST-START-FILE legacy-manifest.sh
+#!/bin/bash
+set -e
+python3 - <<'PY'
+import json
+import os
+
+with open("state/manifest.json") as manifest_file:
+    data = json.load(manifest_file)
+
+renamed = False
+for item in data["installed_packages"]:
+    if item["package_dict"].get("name") == "log4j":
+        item["package_dict"]["name"] = "log4j.git"
+        renamed = True
+
+if not renamed:
+    raise SystemExit("log4j is not installed")
+
+with open("state/manifest.json", "w") as manifest_file:
+    json.dump(data, manifest_file)
+
+for base in ("state/clones/package", "scripts/packages", "plugins/packages"):
+    src = os.path.join(base, "log4j")
+    dst = os.path.join(base, "log4j.git")
+    if os.path.isdir(src):
+        os.rename(src, dst)
+
+link = "scripts/log4j"
+if os.path.islink(link):
+    os.remove(link)
+PY
+@TEST-END-FILE

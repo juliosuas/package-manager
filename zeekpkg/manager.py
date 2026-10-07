@@ -62,6 +62,7 @@ from .package import (
     PackageInfo,
     PackageStatus,
     PackageVersion,
+    _request_matches_package,
     aliases,
     canonical_url,
     make_builtin_package,
@@ -715,9 +716,11 @@ class Manager:
             PackageInfo: PackageInfo instance representing a builtin package
             matching ``pkg_path``.
         """
-        pkg_name = name_from_path(pkg_path)
+        # Compare the requested final component once. name_from_path() would
+        # strip a ".git" before matches_path() strips another.
+        raw_name = canonical_url(pkg_path).split("/")[-1]
         for info in self.discover_builtin_packages():
-            if info.package and info.package.matches_path(pkg_name):
+            if info.package and info.package.matches_path(raw_name):
                 return info
 
         return None
@@ -777,10 +780,58 @@ class Manager:
             if pkg.matches_path(canon_url):
                 rval.append(pkg)
 
-        return rval
+        # An exact package name beats a ".git" alias. If several packages
+        # share that exact name, keep them all so the caller can reject the
+        # request instead of picking one.
+        requested = canon_url.split("/")[-1]
+        exact = [pkg for pkg in rval if pkg.name == requested]
+        return exact or rval
+
+    def _installed_matches(self, pkg_path: str) -> list[InstalledPackage]:
+        """Installed packages a request can refer to.
+
+        The package stored under the requested spelling wins. Otherwise the
+        ``.git`` compatibility alias is used: ``foo.git`` may be the package
+        stored as ``foo``, and ``foo`` may be a package still stored as
+        ``foo.git`` from before names dropped that suffix. When more than one
+        package fits the alias, the request is ambiguous and the list has
+        more than one entry.
+        """
+        raw_name = canonical_url(pkg_path).split("/")[-1]
+        if exact := self.installed_pkgs.get(raw_name):
+            return [exact]
+
+        matches: list[InstalledPackage] = []
+        normalized = name_from_path(raw_name)
+
+        if normalized != raw_name:
+            # Requested "foo.git" for a package stored under its new name.
+            aliased = self.installed_pkgs.get(normalized)
+            if (
+                aliased is not None
+                and aliased.package.name == normalized
+                and name_from_path(aliased.package.git_url) == normalized
+            ):
+                matches.append(aliased)
+
+        for ipkg in self.installed_pkgs.values():
+            # Installed before names dropped a trailing ".git": the manifest
+            # key is the raw URL component, not the name used now.
+            canonical = name_from_path(ipkg.package.git_url)
+            if ipkg.package.name == canonical:
+                continue
+
+            if canonical in (raw_name, normalized):
+                matches.append(ipkg)
+
+        return matches
 
     def find_installed_package(self, pkg_path: str) -> InstalledPackage | None:
         """Return an :class:`.package.InstalledPackage` if one matches the name.
+
+        An exact manifest name is preferred over the ``.git`` compatibility
+        alias. If the alias would match two different installed packages, this
+        returns None rather than choosing one.
 
         Args:
             pkg_path (str): the full git URL of a package or the shortened
@@ -789,8 +840,26 @@ class Manager:
                 :file:`alice/zkg.index`, the following inputs may refer
                 to the package: "foo", "alice/foo", or "zeek/alice/foo".
         """
-        pkg_name = name_from_path(pkg_path)
-        return self.installed_pkgs.get(pkg_name)
+        matches = self._installed_matches(pkg_path)
+        if len(matches) == 1:
+            return matches[0]
+
+        if len(matches) > 1:
+            LOG.warning("%s", self._ambiguous_installed_reason(pkg_path))
+
+        return None
+
+    def _ambiguous_installed_reason(self, pkg_path: str) -> str:
+        """Error string when a request aliases to more than one installed package."""
+        matches = self._installed_matches(pkg_path)
+        if len(matches) < 2:
+            return ""
+
+        names = [ipkg.package.qualified_name() for ipkg in matches]
+        return (
+            f'"{pkg_path}" matches multiple installed packages, '
+            f"try a more specific name from: {names}"
+        )
 
     def get_installed_package_dependencies(
         self,
@@ -1352,6 +1421,9 @@ class Manager:
         """
         pkg_path = canonical_url(pkg_path)
         LOG.debug('upgrading "%s"', pkg_path)
+        if conflict := self._ambiguous_installed_reason(pkg_path):
+            return conflict
+
         ipkg = self.find_installed_package(pkg_path)
 
         if not ipkg:
@@ -1533,6 +1605,9 @@ class Manager:
         """
         pkg_path = canonical_url(pkg_path)
         LOG.debug('loading "%s"', pkg_path)
+        if conflict := self._ambiguous_installed_reason(pkg_path):
+            return conflict
+
         ipkg = self.find_installed_package(pkg_path)
 
         if not ipkg:
@@ -1667,7 +1742,10 @@ class Manager:
             list: list of depender packages.
         """
         depender_packages: set[str] = set()
-        pkg_name = name_from_path(pkg_path)
+        ipkg = self.find_installed_package(pkg_path)
+        # Dependents are keyed by the manifest name. Stripping ".git" again
+        # would turn a package named "foo.git" into "foo".
+        pkg_name = ipkg.package.name if ipkg else canonical_url(pkg_path).split("/")[-1]
         queue = deque([pkg_name])
         if pkg_dependencies := self.installed_package_dependencies():
             while queue:
@@ -1857,13 +1935,11 @@ class Manager:
         manifest = config.items("bundle")
 
         for git_url, version in manifest:
-            package = Package(
-                git_url=git_url,
-                name=git_url.split("/")[-1],
-                canonical=True,
+            pkg_path = _bundled_clone_path(bundle_dir, git_url)
+            LOG.debug(
+                'getting info for bundled package "%s"',
+                name_from_path(git_url),
             )
-            pkg_path = os.path.join(bundle_dir, package.name)
-            LOG.debug('getting info for bundled package "%s"', package.name)
             pkg_info = self.info(pkg_path, version=version, prefer_installed=False)
             infos.append((git_url, version, pkg_info))
 
@@ -1974,8 +2050,11 @@ class Manager:
                 f'"{pkg_path}" matches multiple packages, '
                 f"try a more specific name from: {matches_string}"
             )
-
-            raise LookupError(reason)
+            return PackageInfo(
+                package=Package(git_url=pkg_path),
+                invalid_reason=reason,
+                status=None,
+            )
 
         package = matches[0]
 
@@ -2121,10 +2200,16 @@ class Manager:
 
         def add_node(node: Node) -> str:
             """Add to graph; return an error string if the bare name collides under a different URL."""
-            pkg_name = name_from_path(node.name)
-            for existing_name in graph:
+            assert node.info
+            # Use the canonical package name. name_from_path() on the qualified
+            # name would strip ".git" a second time and treat "foo.git" as "foo".
+            pkg_name = node.info.package.name
+            for existing_name, existing in graph.items():
+                if existing.info is None:
+                    continue
+
                 if (
-                    name_from_path(existing_name) == pkg_name
+                    existing.info.package.name == pkg_name
                     and existing_name != node.name
                 ):
                     return f'duplicate package name "{pkg_name}": remove one of "{existing_name}", "{node.name}"'
@@ -2620,16 +2705,19 @@ class Manager:
         manifest = config.items("bundle")
 
         for git_url, version in manifest:
+            # bundle() stores the clone under the package name. The manifest
+            # still has the original git URL, whose final component may end
+            # in ".git".
             package = Package(
                 git_url=git_url,
-                name=git_url.split("/")[-1],
+                name=name_from_path(git_url),
                 canonical=True,
             )
 
             # Prepare the clonepath with the contents from the bundle.
             clonepath = os.path.join(self.package_clonedir, package.name)
             delete_path(clonepath)
-            shutil.move(os.path.join(bundle_dir, package.name), clonepath)
+            shutil.move(_bundled_clone_path(bundle_dir, git_url), clonepath)
 
             LOG.debug('unbundle installing "%s"', package.name)
             if err := self._install(package, version, use_existing_clone=True):
@@ -3086,12 +3174,16 @@ class Manager:
         """
         pkg_path = canonical_url(pkg_path)
         LOG.debug('installing "%s"', pkg_path)
+        if ambiguous := self._ambiguous_installed_reason(pkg_path):
+            LOG.info('installing "%s": %s', pkg_path, ambiguous)
+            return ambiguous
+
         ipkg = self.find_installed_package(pkg_path)
 
         if ipkg:
             conflict = ipkg.package
 
-            if conflict.qualified_name().endswith(pkg_path):
+            if _request_matches_package(conflict, pkg_path):
                 LOG.debug('installing "%s": re-install: %s', pkg_path, conflict)
                 clonepath = os.path.join(self.package_clonedir, conflict.name)
                 _clone_package(conflict, clonepath, version)
@@ -3481,6 +3573,26 @@ def _create_readme(file_path: str) -> None:
     with open(file_path, "w") as f:
         f.write("WARNING: This directory is managed by zkg.\n")
         f.write("Don't make direct modifications to anything within it.\n")
+
+
+def _bundled_clone_path(bundle_dir: str, git_url: str) -> str:
+    """Return the clone directory of one package inside an extracted bundle.
+
+    ``bundle()`` writes the clone under the package name, with one trailing
+    ``.git`` removed. Bundles created before that still use the raw final
+    component of the git URL.
+    """
+    name = name_from_path(git_url)
+    current = os.path.join(bundle_dir, name)
+    if os.path.exists(current):
+        return current
+
+    raw_name = canonical_url(git_url).split("/")[-1]
+    legacy = os.path.join(bundle_dir, raw_name)
+    if raw_name != name and os.path.exists(legacy):
+        return legacy
+
+    return current
 
 
 def _clone_package(

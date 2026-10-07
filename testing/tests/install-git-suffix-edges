@@ -1,0 +1,39 @@
+# @TEST-DOC: A repository named foo.git stays distinct from package foo.
+#
+# @TEST-EXEC: bash %INPUT
+# The exact name foo.git is not the package foo.
+# @TEST-EXEC: zkg install foo.git
+# @TEST-EXEC: grep -q 'foo.git loaded' scripts/packages/foo.git/__load__.zeek
+# @TEST-EXEC: test ! -d scripts/packages/foo
+# The clone URL of that repository installs the same package.
+# @TEST-EXEC: zkg remove foo.git
+# @TEST-EXEC: zkg install foo.git.git
+# @TEST-EXEC: grep -q 'foo.git loaded' scripts/packages/foo.git/__load__.zeek
+# @TEST-EXEC: test ! -d scripts/packages/foo
+# foo and foo.git can both be installed, and each spelling targets its own package.
+# @TEST-EXEC: zkg install one/alice/foo
+# @TEST-EXEC: grep -q 'foo loaded' scripts/packages/foo/__load__.zeek
+# @TEST-EXEC: zkg pin foo.git >pin.out
+# @TEST-EXEC: grep -q '/foo.git' pin.out
+# @TEST-EXEC: zkg remove foo
+# @TEST-EXEC: test ! -d scripts/packages/foo
+# @TEST-EXEC: test -d scripts/packages/foo.git
+# @TEST-EXEC: zkg remove foo.git
+# @TEST-EXEC: test ! -d scripts/packages/foo.git
+
+set -e
+
+cp -R packages/foo packages/foo.git.git
+printf 'print "foo.git loaded";\n' > packages/foo.git.git/__load__.zeek
+(
+    cd packages/foo.git.git &&
+    git add __load__.zeek &&
+    git commit -m 'foo.git'
+)
+
+echo "$(pwd)/packages/foo.git.git" >> sources/one/alice/zkg.index
+(
+    cd sources/one &&
+    git add alice/zkg.index &&
+    git commit -m 'add foo.git.git'
+)

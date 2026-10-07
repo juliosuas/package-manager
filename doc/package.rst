@@ -26,9 +26,11 @@ as how it inter-operates with Zeek, the package manager, or other packages.
 
 Note that the shorthand name for your package that may be used by :ref:`zkg
 <zkg>` and Zeek script :samp:`@load {<package_name>}` directives will be the
-last component of its git URL. E.g. a package at ``https://github.com/zeek/foo``
-may be referred to as **foo** when using :program:`zkg` and a Zeek
-script that wants to load all the scripts within that package can use:
+last component of its git URL, not including a trailing ``.git`` suffix.
+E.g. a package at ``https://github.com/zeek/foo`` or
+``https://github.com/zeek/foo.git`` may be referred to as **foo** when using
+:program:`zkg` and a Zeek script that wants to load all the scripts within
+that package can use:
 
 .. code-block:: zeek
 

@@ -427,11 +427,13 @@ def get_changed_state(
         dep_listing (str): string installed packages that have changed state
 
     """
-    _lst = [zeekpkg.package.name_from_path(_pkg_path) for _pkg_path in pkg_lst]
+    # Callers pass manifest names. name_from_path() would strip ".git" from a
+    # package whose real name ends in that suffix.
+    skip = set(pkg_lst)
     dep_listing = ""
 
     for _pkg_name in sorted(manager.installed_package_dependencies()):
-        if _pkg_name in _lst:
+        if _pkg_name in skip:
             continue
 
         _ipkg = manager.find_installed_package(_pkg_name)
@@ -814,16 +816,18 @@ def cmd_install(
             _listing, saved_state = "", manager.loaded_package_states()
             name = info.package.qualified_name()
 
-            load_error2 = manager.load_with_dependencies(
-                zeekpkg.package.name_from_path(name),
-            )
+            load_error2 = manager.load_with_dependencies(info.package.name)
 
             for _name, _error in load_error2:
                 if not _error:
                     _listing += f"  {_name}\n"
 
             if not _listing:
-                dep_listing = get_changed_state(manager, saved_state, [name])
+                dep_listing = get_changed_state(
+                    manager,
+                    saved_state,
+                    [info.package.name],
+                )
 
                 if dep_listing:
                     print(
@@ -1662,9 +1666,7 @@ def cmd_load(
             saved_state = manager.loaded_package_states()
             dep_error_listing, load_error = "", False
 
-            loaded_dep_list = manager.load_with_dependencies(
-                zeekpkg.package.name_from_path(name),
-            )
+            loaded_dep_list = manager.load_with_dependencies(ipkg.package.name)
 
             for _name, _error in loaded_dep_list:
                 if _error:
@@ -1672,7 +1674,11 @@ def cmd_load(
                     dep_error_listing += f"  {_name}: {_error}\n"
 
             if not load_error:
-                dep_listing = get_changed_state(manager, saved_state, [name])
+                dep_listing = get_changed_state(
+                    manager,
+                    saved_state,
+                    [ipkg.package.name],
+                )
 
                 if dep_listing:
                     print(

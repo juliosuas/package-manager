@@ -1,0 +1,27 @@
+# @TEST-DOC: Two packages that both normalize to foo are rejected for either spelling.
+#
+# @TEST-EXEC: bash %INPUT
+# @TEST-EXEC-FAIL: zkg install foo
+# @TEST-EXEC: grep -q 'matches multiple packages' .stderr
+# @TEST-EXEC-FAIL: zkg install foo.git
+# @TEST-EXEC: grep -q 'matches multiple packages' .stderr
+# @TEST-EXEC: zkg install one/alice/foo
+# @TEST-EXEC: grep -q 'print "foo loaded"' scripts/packages/foo/__load__.zeek
+
+set -e
+
+mkdir -p packages/extra
+cp -R packages/foo packages/extra/foo.git
+printf 'print "other foo loaded";\n' > packages/extra/foo.git/__load__.zeek
+(
+    cd packages/extra/foo.git &&
+    git add __load__.zeek &&
+    git commit -m 'other foo'
+)
+
+echo "$(pwd)/packages/extra/foo.git" >> sources/one/bob/zkg.index
+(
+    cd sources/one &&
+    git add bob/zkg.index &&
+    git commit -m 'add second foo'
+)

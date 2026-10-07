@@ -30,9 +30,47 @@ LEGACY_PLUGIN_MAGIC_FILE = "__bro_plugin__"
 LEGACY_PLUGIN_MAGIC_FILE_DISABLED = "__bro_plugin__.disabled"
 
 
+def _strip_git_suffix(component: str) -> str:
+    """Drop one trailing ``.git`` from a single URL path component.
+
+    ``.git`` is a clone-URL suffix, not part of the package name. Only one
+    suffix is removed, so ``foo.git.git`` is the clone URL of a repository
+    named ``foo.git``. A component that is exactly ``.git``, or that is not a
+    bare name (for example an scp-style URL with no ``/``), is left unchanged.
+    """
+    if not component.endswith(".git"):
+        return component
+
+    stripped = component[: -len(".git")]
+    if not stripped or stripped.startswith(".") or ":" in stripped or "@" in stripped:
+        return component
+
+    return stripped
+
+
+def _names_compatible(requested: str, canonical: str) -> bool:
+    """Return whether ``requested`` names a package whose name is ``canonical``.
+
+    ``canonical`` is compared unchanged. ``requested`` may add one trailing
+    ``.git`` clone-URL suffix, so ``foo`` and ``foo.git`` match a package
+    named ``foo``, while ``foo.git.git`` matches a package named ``foo.git``.
+    """
+    if requested == canonical:
+        return True
+
+    stripped = _strip_git_suffix(requested)
+    return stripped != requested and stripped == canonical
+
+
 def name_from_path(path: str) -> str:
-    """Returns the name of a package given a path to its git repository."""
-    return canonical_url(path).split("/")[-1]
+    """Returns the name of a package given a path to its git repository.
+
+    A single trailing ``.git`` on the final path component is ignored, so
+    ``https://github.com/org/foo.git`` and ``foo.git`` both name the package
+    ``foo``. A repository whose own name ends in ``.git`` keeps that name:
+    ``foo.git.git`` names the package ``foo.git``.
+    """
+    return _strip_git_suffix(canonical_url(path).split("/")[-1])
 
 
 def canonical_url(path: str) -> str:
@@ -429,7 +467,8 @@ class Package:
             Zeek package is located
 
         name (str): the canonical name of the package, which is always the
-            last component of the git URL path
+            last component of the git URL path. A single trailing ``.git`` on
+            that component is not part of the name.
 
         source (str): the package source this package comes from, which
             may be empty if the package is not a part of a source (i.e. the user
@@ -575,7 +614,11 @@ class Package:
         """Return whether this package has a matching path/name.
 
         E.g for a package with :meth:`qualified_name()` of "zeek/alice/foo",
-        the following inputs will match: "foo", "alice/foo", "zeek/alice/foo"
+        the following inputs will match: "foo", "alice/foo", "zeek/alice/foo".
+        A single trailing ``.git`` on the requested package name is ignored,
+        so ``foo`` and ``foo.git`` match a package named ``foo``. The stored
+        name is not stripped again, so a package named ``foo.git`` does not
+        match ``foo``.
         """
         path_parts = path.split("/")
 
@@ -585,16 +628,45 @@ class Package:
 
             for i, part in reversed(list(enumerate(path_parts))):
                 ri = i - len(path_parts)
+                expected = pkg_path_parts[ri]
 
-                if part != pkg_path_parts[ri]:
+                # Only the package name (the final component) treats one
+                # ".git" as an optional clone-URL suffix. Earlier components
+                # are directory names and keep a literal ".git".
+                if ri == -1:
+                    if not _names_compatible(part, expected):
+                        return False
+                elif part != expected:
                     return False
 
             return True
 
-        if len(path_parts) == 1 and path_parts[-1] == self.name:
+        if len(path_parts) == 1 and _names_compatible(path_parts[-1], self.name):
             return True
 
         return path == self.git_url
+
+
+def _request_matches_package(package: Package, pkg_path: str) -> bool:
+    """Return whether ``pkg_path`` refers to this package.
+
+    Like :meth:`Package.matches_path`. A package installed before names
+    dropped a trailing ``.git`` is still stored under that older name; match
+    it by its current name so one extra ``.git`` does not look like a hit.
+    """
+    # Legacy manifests stored the raw final URL component, which is the
+    # current canonical name plus one ".git".
+    normalized = name_from_path(package.git_url)
+    if package.name == f"{normalized}.git":
+        package = Package(
+            git_url=package.git_url,
+            source=package.source,
+            directory=package.directory,
+            name=normalized,
+            canonical=True,
+        )
+
+    return package.matches_path(pkg_path)
 
 
 def make_builtin_package(
